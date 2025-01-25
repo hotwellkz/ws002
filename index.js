@@ -71,13 +71,6 @@ async function connectToWhatsApp(sessionId) {
         await fs.mkdir(sessionDir, { recursive: true });
         console.log('Created session directory:', sessionDir);
         
-        // Создаем промис для ожидания QR кода
-        let qrResolve;
-        const qrPromise = new Promise(resolve => {
-            qrResolve = resolve;
-        });
-        qrPromises.set(sessionId, qrResolve);
-        
         // Инициализируем состояние авторизации
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
         console.log('Auth state initialized:', state);
@@ -109,7 +102,6 @@ async function connectToWhatsApp(sessionId) {
                     const qrCode = await QRCode.toDataURL(qr);
                     qrCodes.set(sessionId, qrCode);
                     console.log('QR code generated and stored for session:', sessionId);
-                    console.log('Current QR codes:', Array.from(qrCodes.keys()));
                     
                     // Разрешаем промис с QR кодом
                     const qrResolve = qrPromises.get(sessionId);
@@ -131,8 +123,11 @@ async function connectToWhatsApp(sessionId) {
             }
 
             if (connection === 'open') {
-                console.log('Connection opened successfully');
-                // Сохраняем состояние сразу после успешного подключения
+                console.log('Connection opened successfully for session:', sessionId);
+                // Очищаем QR код и промис
+                qrCodes.delete(sessionId);
+                qrPromises.delete(sessionId);
+                // Сохраняем состояние
                 await saveCreds();
             }
         });
@@ -146,9 +141,6 @@ async function connectToWhatsApp(sessionId) {
         // Сохраняем соединение
         connections.set(sessionId, sock);
         console.log('Connection stored in connections map');
-        
-        // Ждем генерации QR кода
-        await qrPromise;
         
         return sock;
     } catch (error) {
@@ -177,22 +169,44 @@ app.post('/session/create', async (req, res) => {
         const sessionId = Date.now().toString();
         console.log('Generated session ID:', sessionId);
         
+        // Создаем промис для ожидания QR кода
+        const qrPromise = new Promise((resolve) => {
+            qrPromises.set(sessionId, resolve);
+        });
+        
+        // Запускаем подключение
         await connectToWhatsApp(sessionId);
         console.log('WhatsApp connection established');
         
-        // Получаем QR код
-        const qrCode = qrCodes.get(sessionId);
-        
-        res.json({ 
-            sessionId,
-            qr: qrCode // Сразу отправляем QR код вместе с ID сессии
+        // Ждем генерации QR кода (максимум 10 секунд)
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('QR code generation timeout')), 10000);
         });
+        
+        try {
+            await Promise.race([qrPromise, timeoutPromise]);
+            const qrCode = qrCodes.get(sessionId);
+            
+            if (!qrCode) {
+                throw new Error('QR code not generated');
+            }
+            
+            res.json({ 
+                sessionId,
+                qr: qrCode
+            });
+        } catch (error) {
+            console.error('QR code error:', error);
+            res.status(500).json({ 
+                error: 'Failed to generate QR code',
+                details: error.message
+            });
+        }
     } catch (error) {
         console.error('Session creation error:', error);
         res.status(500).json({ 
             error: 'Failed to create session',
-            details: error.message,
-            stack: error.stack
+            details: error.message
         });
     }
 });
