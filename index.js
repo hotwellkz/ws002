@@ -199,6 +199,8 @@ app.post('/session/create', async (req, res) => {
 app.get('/session/:sessionId/qr', (req, res) => {
     const { sessionId } = req.params;
     console.log('Received request for QR code, session:', sessionId);
+    console.log('Available QR codes:', Array.from(qrCodes.keys()));
+    console.log('Available connections:', Array.from(connections.keys()));
     
     const qrCode = qrCodes.get(sessionId);
     
@@ -207,7 +209,11 @@ app.get('/session/:sessionId/qr', (req, res) => {
         res.json({ qr: qrCode });
     } else {
         console.log('QR code not found for session:', sessionId);
-        res.status(404).json({ error: 'QR code not found' });
+        res.status(404).json({ 
+            error: 'QR code not found',
+            sessionId,
+            availableSessions: Array.from(qrCodes.keys())
+        });
     }
 });
 
