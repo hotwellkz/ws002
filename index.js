@@ -120,10 +120,11 @@ async function connectToWhatsApp(sessionId) {
             if (qr) {
                 // Генерируем QR код
                 try {
-                    console.log('Generating QR code');
+                    console.log('Generating QR code for session:', sessionId);
                     const qrCode = await QRCode.toDataURL(qr);
                     qrCodes.set(sessionId, qrCode);
-                    console.log('QR code generated and stored');
+                    console.log('QR code generated and stored for session:', sessionId);
+                    console.log('Current QR codes:', Array.from(qrCodes.keys()));
                 } catch (err) {
                     console.error('QR Code generation error:', err);
                 }
