@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: whatsapp-server
+    env: docker
+    rootDir: whatsapp-server
+    region: singapore
+    plan: free
+    scaling:
+      minInstances: 1
+      maxInstances: 1
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_ENV
+        value: production
+    disk:
+      name: sessions
+      mountPath: /app/sessions
+      sizeGB: 1
