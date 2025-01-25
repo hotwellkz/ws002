@@ -28,8 +28,9 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Хранилище для активных соединений
 const connections = new Map();
 
-// Хранилище для QR кодов
+// Хранилище для QR кодов и промисов ожидания QR
 const qrCodes = new Map();
+const qrPromises = new Map();
 
 // Создаем папку для сессий, если её нет
 async function ensureSessionsDirectory() {
@@ -62,36 +63,12 @@ async function connectToWhatsApp(sessionId) {
         await fs.mkdir(sessionDir, { recursive: true });
         console.log('Created session directory:', sessionDir);
         
-        // Копируем пустой creds.json если его нет
-        const credsPath = join(sessionDir, 'creds.json');
-        try {
-            await fs.access(credsPath);
-            console.log('Creds file exists:', credsPath);
-        } catch {
-            console.log('Creating new creds file:', credsPath);
-            const defaultCreds = {
-                noiseKey: null,
-                signedIdentityKey: null,
-                signedPreKey: null,
-                registrationId: null,
-                advSecretKey: null,
-                processedHistoryMessages: [],
-                nextPreKeyId: 0,
-                firstUnuploadedPreKeyId: 0,
-                accountSyncCounter: 0,
-                accountSettings: {
-                    unarchiveChats: false
-                },
-                deviceId: null,
-                phoneId: null,
-                identityId: null,
-                registered: false,
-                backupToken: null,
-                registration: null,
-                pairingCode: null
-            };
-            await fs.writeFile(credsPath, JSON.stringify(defaultCreds, null, 2), 'utf8');
-        }
+        // Создаем промис для ожидания QR кода
+        let qrResolve;
+        const qrPromise = new Promise(resolve => {
+            qrResolve = resolve;
+        });
+        qrPromises.set(sessionId, qrResolve);
         
         // Инициализируем состояние авторизации
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
@@ -125,6 +102,13 @@ async function connectToWhatsApp(sessionId) {
                     qrCodes.set(sessionId, qrCode);
                     console.log('QR code generated and stored for session:', sessionId);
                     console.log('Current QR codes:', Array.from(qrCodes.keys()));
+                    
+                    // Разрешаем промис с QR кодом
+                    const qrResolve = qrPromises.get(sessionId);
+                    if (qrResolve) {
+                        qrResolve(qrCode);
+                        qrPromises.delete(sessionId);
+                    }
                 } catch (err) {
                     console.error('QR Code generation error:', err);
                 }
@@ -154,6 +138,9 @@ async function connectToWhatsApp(sessionId) {
         // Сохраняем соединение
         connections.set(sessionId, sock);
         console.log('Connection stored in connections map');
+        
+        // Ждем генерации QR кода
+        await qrPromise;
         
         return sock;
     } catch (error) {
@@ -185,7 +172,13 @@ app.post('/session/create', async (req, res) => {
         await connectToWhatsApp(sessionId);
         console.log('WhatsApp connection established');
         
-        res.json({ sessionId });
+        // Получаем QR код
+        const qrCode = qrCodes.get(sessionId);
+        
+        res.json({ 
+            sessionId,
+            qr: qrCode // Сразу отправляем QR код вместе с ID сессии
+        });
     } catch (error) {
         console.error('Session creation error:', error);
         res.status(500).json({ 
