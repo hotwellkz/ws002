@@ -9,19 +9,21 @@ const fs = require('fs').promises;
 const app = express();
 const port = process.env.PORT || 10000;
 
-// Настраиваем CORS
+// Настраиваем CORS для всех доменов
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:3000', 'https://2wix.ru'],
+    origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true
+    credentials: true,
+    optionsSuccessStatus: 200
 }));
 
 // Добавляем обработку OPTIONS запросов
 app.options('*', cors());
 
-// Парсинг JSON
-app.use(express.json());
+// Парсинг JSON с увеличенным лимитом
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Хранилище для активных соединений
 const connections = new Map();
@@ -34,11 +36,14 @@ async function ensureSessionsDirectory() {
     const sessionsDir = join(__dirname, 'sessions');
     try {
         await fs.access(sessionsDir);
+        console.log('Sessions directory exists:', sessionsDir);
     } catch {
+        console.log('Creating sessions directory:', sessionsDir);
         await fs.mkdir(sessionsDir, { recursive: true });
         // Создаем пустой файл creds.json для инициализации
         const credsPath = join(sessionsDir, 'creds.json');
         await fs.writeFile(credsPath, '{}', 'utf8');
+        console.log('Created empty creds.json');
     }
     return sessionsDir;
 }
@@ -55,35 +60,54 @@ async function connectToWhatsApp(sessionId) {
         // Создаем папку для конкретной сессии
         const sessionDir = join(sessionsDir, sessionId);
         await fs.mkdir(sessionDir, { recursive: true });
+        console.log('Created session directory:', sessionDir);
         
         // Копируем пустой creds.json если его нет
         const credsPath = join(sessionDir, 'creds.json');
         try {
             await fs.access(credsPath);
+            console.log('Creds file exists:', credsPath);
         } catch {
-            await fs.copyFile(join(sessionsDir, 'creds.json'), credsPath);
+            console.log('Creating new creds file:', credsPath);
+            const defaultCreds = {
+                noiseKey: null,
+                signedIdentityKey: null,
+                signedPreKey: null,
+                registrationId: null,
+                advSecretKey: null,
+                processedHistoryMessages: [],
+                nextPreKeyId: 0,
+                firstUnuploadedPreKeyId: 0,
+                accountSyncCounter: 0,
+                accountSettings: {
+                    unarchiveChats: false
+                },
+                deviceId: null,
+                phoneId: null,
+                identityId: null,
+                registered: false,
+                backupToken: null,
+                registration: null,
+                pairingCode: null
+            };
+            await fs.writeFile(credsPath, JSON.stringify(defaultCreds, null, 2), 'utf8');
         }
         
-        console.log('Session directory created:', sessionDir);
-
         // Инициализируем состояние авторизации
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
         console.log('Auth state initialized:', state);
-
-        if (!state.creds) {
-            console.log('Creating initial creds');
-            state.creds = {
-                registered: false,
-                me: { id: '', name: '' }
-            };
-        }
 
         // Создаем сокет с правильными параметрами
         const sock = makeWASocket({
             auth: state,
             printQRInTerminal: true,
             browser: Browsers.ubuntu('Chrome'),
-            defaultQueryTimeoutMs: undefined
+            defaultQueryTimeoutMs: undefined,
+            connectTimeoutMs: 60000,
+            keepAliveIntervalMs: 30000,
+            emitOwnEvents: true,
+            markOnlineOnConnect: true,
+            qrTimeout: 40000
         });
 
         console.log('WhatsApp socket created');
@@ -140,6 +164,8 @@ async function connectToWhatsApp(sessionId) {
 // Middleware для логирования запросов
 app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+    console.log('Headers:', req.headers);
+    console.log('Body:', req.body);
     next();
 });
 
@@ -163,7 +189,8 @@ app.post('/session/create', async (req, res) => {
         console.error('Session creation error:', error);
         res.status(500).json({ 
             error: 'Failed to create session',
-            details: error.message 
+            details: error.message,
+            stack: error.stack
         });
     }
 });
@@ -215,7 +242,8 @@ app.post('/session/:sessionId/send', async (req, res) => {
         console.error('Message sending error:', error);
         res.status(500).json({ 
             error: 'Failed to send message',
-            details: error.message 
+            details: error.message,
+            stack: error.stack
         });
     }
 });
@@ -225,7 +253,8 @@ app.use((err, req, res, next) => {
     console.error('Unhandled error:', err);
     res.status(500).json({
         error: 'Internal server error',
-        details: err.message
+        details: err.message,
+        stack: err.stack
     });
 });
 
