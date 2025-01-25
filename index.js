@@ -9,9 +9,9 @@ const fs = require('fs').promises;
 const app = express();
 const port = process.env.PORT || 10000;
 
-// Настраиваем CORS для всех доменов
+// Настраиваем CORS для разрешенных доменов
 app.use(cors({
-    origin: '*',
+    origin: ['https://2wix.ru', 'http://localhost:5173', 'http://localhost:3000'],
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
